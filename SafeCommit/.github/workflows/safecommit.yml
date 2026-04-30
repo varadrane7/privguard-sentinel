@@ -1,0 +1,68 @@
+name: SafeCommit Security Scan
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  safecommit-scan:
+    name: SafeCommit — Privacy & Threat Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install scanner dependencies
+        working-directory: packages/scanner
+        run: npm ci
+
+      - name: Build scanner
+        working-directory: packages/scanner
+        run: npm run build
+
+      - name: Run SafeCommit scan
+        id: scan
+        run: |
+          node packages/scanner/dist/index.js . \
+            --output safecommit-report.json \
+            --fail-on-block
+        continue-on-error: true
+
+      - name: Upload scan report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safecommit-report
+          path: safecommit-report.json
+          retention-days: 30
+
+      - name: Post scan summary
+        if: always()
+        run: |
+          if [ -f safecommit-report.json ]; then
+            DECISION=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['overallDecision'])")
+            SCORE=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['scores']['overall'])")
+            FINDINGS=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['summary']['totalFindings'])")
+            echo "## SafeCommit Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+            echo "| Decision | **${DECISION}** |" >> $GITHUB_STEP_SUMMARY
+            echo "| Overall Risk | ${SCORE}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Findings | ${FINDINGS} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on BLOCK decision
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "SafeCommit BLOCKED this deployment due to critical security/privacy findings."
+          echo "Review safecommit-report.json for details."
+          exit 1

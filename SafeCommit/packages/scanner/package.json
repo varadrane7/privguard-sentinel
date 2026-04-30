@@ -1,0 +1,22 @@
+{
+  "name": "safecommit-scanner",
+  "version": "1.0.0",
+  "description": "SafeCommit static analysis scanner CLI",
+  "main": "dist/index.js",
+  "bin": {
+    "safecommit": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "scan": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  }
+}

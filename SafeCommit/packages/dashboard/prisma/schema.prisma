@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Report {
+  id               String    @id @default(cuid())
+  createdAt        DateTime  @default(now())
+  timestamp        String
+  scannedDirectory String
+  overallDecision  String
+  privacyScore     Int
+  threatScore      Int
+  overallScore     Int
+  confidenceScore  Int
+  totalFiles       Int
+  totalFindings    Int
+  criticalCount    Int
+  highCount        Int
+  mediumCount      Int
+  lowCount         Int
+  findings         Finding[]
+}
+
+model Finding {
+  id             String @id @default(cuid())
+  findingId      String
+  type           String
+  severity       String
+  file           String
+  line           Int
+  snippet        String
+  ruleTriggered  String
+  recommendation String
+  reportId       String
+  report         Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+}
