@@ -117,9 +117,9 @@ const RULES: Rule[] = [
 ];
 
 function extractSnippet(lines: string[], lineIndex: number): string {
-  const start = Math.max(0, lineIndex - 1);
-  const end = Math.min(lines.length - 1, lineIndex + 1);
-  return lines.slice(start, end + 1).join("\n").trim().slice(0, 200);
+  const start = Math.max(0, lineIndex - 10);
+  const end = Math.min(lines.length - 1, lineIndex + 10);
+  return lines.slice(start, end + 1).join("\n").trim().slice(0, 1500);
 }
 
 export function scanFileContent(filePath: string, content: string): Finding[] {

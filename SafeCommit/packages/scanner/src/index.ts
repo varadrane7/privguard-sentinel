@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { traverseDirectory, readFile } from "./traversal";
 import { scanFileContent } from "./rules";
 import { calculateScores, makeDecision } from "./scorer";
+import { analyzeWithLLM } from "./llm";
 import { SafeCommitReport } from "./types";
 
 const program = new Command();
@@ -17,6 +18,9 @@ program
   .option("-o, --output <file>", "Write JSON report to file", "safecommit-report.json")
   .option("--no-report", "Skip writing JSON report to disk")
   .option("--fail-on-block", "Exit with code 1 if decision is BLOCK")
+  .option("--llm", "Enable Stage 2 LLM analysis via Ollama to reduce false positives")
+  .option("--llm-model <model>", "Ollama model to use for Stage 2", "mistral")
+  .option("--llm-url <url>", "Ollama base URL", "http://localhost:11434")
   .parse(process.argv);
 
 const [target] = program.args;
@@ -44,7 +48,7 @@ async function run() {
       const content = readFile(file);
       const findings = scanFileContent(file, content);
       if (findings.length > 0) {
-        console.log(`    ⚠  ${findings.length} finding(s) detected`);
+        console.log(`    [!] ${findings.length} finding(s) detected`);
       }
       allFindings.push(...findings);
     } catch (err) {
@@ -52,14 +56,45 @@ async function run() {
     }
   }
 
-  const scores = calculateScores(allFindings);
-  const decision = makeDecision(scores, allFindings);
+  // Stage 2: LLM analysis
+  let llmDismissed = 0;
+  if (opts.llm) {
+    console.log(`\n[SafeCommit] Stage 2: Running LLM analysis (model: ${opts.llmModel})...\n`);
+    for (const finding of allFindings) {
+      process.stdout.write(`  Analyzing: ${path.basename(finding.file)} line ${finding.line} ... `);
+      const result = await analyzeWithLLM(
+        path.basename(finding.file),
+        finding.line,
+        finding.snippet,
+        opts.llmModel,
+        opts.llmUrl
+      );
+      finding.llmConfirmed = result.isViolation;
+      finding.llmViolationType = result.type;
+      finding.llmReason = result.reason;
+      if (!result.isViolation) {
+        llmDismissed++;
+        console.log(`DISMISSED (${result.reason.slice(0, 60)})`);
+      } else {
+        console.log(`CONFIRMED [${result.type}]`);
+      }
+    }
+    console.log(`\n  LLM confirmed: ${allFindings.length - llmDismissed} | dismissed: ${llmDismissed}\n`);
+  }
+
+  // Score only confirmed findings when LLM is active
+  const scoredFindings = opts.llm
+    ? allFindings.filter((f) => f.llmConfirmed !== false)
+    : allFindings;
+
+  const scores = calculateScores(scoredFindings);
+  const decision = makeDecision(scores, scoredFindings);
 
   const severityCounts = {
-    criticalCount: allFindings.filter((f) => f.severity === "CRITICAL").length,
-    highCount: allFindings.filter((f) => f.severity === "HIGH").length,
-    mediumCount: allFindings.filter((f) => f.severity === "MEDIUM").length,
-    lowCount: allFindings.filter((f) => f.severity === "LOW").length,
+    criticalCount: scoredFindings.filter((f) => f.severity === "CRITICAL").length,
+    highCount: scoredFindings.filter((f) => f.severity === "HIGH").length,
+    mediumCount: scoredFindings.filter((f) => f.severity === "MEDIUM").length,
+    lowCount: scoredFindings.filter((f) => f.severity === "LOW").length,
   };
 
   const report: SafeCommitReport = {
@@ -71,7 +106,7 @@ async function run() {
     findings: allFindings,
     summary: {
       totalFiles: files.length,
-      totalFindings: allFindings.length,
+      totalFindings: scoredFindings.length,
       ...severityCounts,
     },
   };
@@ -85,15 +120,18 @@ async function run() {
   console.log(`  Privacy    : ${scores.privacy}/100`);
   console.log(`  Threat     : ${scores.threat}/100`);
   console.log(`  Confidence : ${scores.confidence}%`);
-  console.log(`  Findings   : ${allFindings.length} total (${severityCounts.criticalCount} critical, ${severityCounts.highCount} high)`);
+  console.log(`  Findings   : ${scoredFindings.length} total (${severityCounts.criticalCount} critical, ${severityCounts.highCount} high)`);
+  if (opts.llm && llmDismissed > 0) {
+    console.log(`  Dismissed  : ${llmDismissed} false positive(s) by LLM`);
+  }
   console.log("=".repeat(60));
 
-  if (allFindings.length > 0) {
+  if (scoredFindings.length > 0) {
     console.log("\n  Findings:\n");
-    for (const f of allFindings) {
-      const icon = f.severity === "CRITICAL" ? "🚨" : f.severity === "HIGH" ? "⛔" : f.severity === "MEDIUM" ? "⚠️" : "ℹ️";
-      console.log(`  ${icon} [${f.severity}] ${f.ruleTriggered}`);
+    for (const f of scoredFindings) {
+      console.log(`  [${f.severity}] ${f.ruleTriggered}`);
       console.log(`     File: ${path.relative(resolvedTarget, f.file)} (line ${f.line})`);
+      if (f.llmReason) console.log(`     LLM : ${f.llmReason}`);
       console.log(`     Fix : ${f.recommendation}`);
       console.log();
     }

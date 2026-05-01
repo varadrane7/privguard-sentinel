@@ -11,6 +11,9 @@ export interface Finding {
   snippet: string;
   ruleTriggered: string;
   recommendation: string;
+  llmConfirmed?: boolean;
+  llmViolationType?: string;
+  llmReason?: string;
 }
 
 export interface Scores {
