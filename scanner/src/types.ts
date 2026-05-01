@@ -1,6 +1,7 @@
-export type DecisionType = "PASS" | "WARNING" | "BLOCK";
-export type FindingType = "privacy" | "threat";
+export type DecisionType = "Safe to Merge" | "Needs Review" | "Do Not Merge";
+export type FindingType = "quality" | "security" | "privacy" | "ai_safety" | "backdoor";
 export type Severity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type Intent = "accidental" | "negligent" | "suspicious" | "malicious";
 
 export interface Finding {
   id: string;
@@ -9,27 +10,49 @@ export interface Finding {
   file: string;
   line: number;
   snippet: string;
+  ruleId: string;
   ruleTriggered: string;
   recommendation: string;
+  whyItMatters: string;
   llmConfirmed?: boolean;
   llmViolationType?: string;
   llmReason?: string;
+  llmFix?: string;
+  llmIntent?: Intent;
+  confidence?: number;
 }
 
 export interface Scores {
-  privacy: number;
-  threat: number;
   overall: number;
+  privacy: number;
+  security: number;
+  aiSafety: number;
+  backdoorRisk: number;
   confidence: number;
 }
 
-export interface SafeCommitReport {
-  version: "1.0";
+export interface PrivacyDiff {
+  before: {
+    piiFields: string[];
+    thirdParties: string[];
+    loggingRisk: "none" | "low" | "medium" | "high";
+  };
+  after: {
+    piiFields: string[];
+    thirdParties: string[];
+    loggingRisk: "none" | "low" | "medium" | "high";
+  };
+  riskChangePct: number;
+}
+
+export interface PrivGuardReport {
+  version: "2.0";
   timestamp: string;
   scannedDirectory: string;
   overallDecision: DecisionType;
   scores: Scores;
   findings: Finding[];
+  privacyDiff: PrivacyDiff;
   summary: {
     totalFiles: number;
     totalFindings: number;
@@ -37,5 +60,6 @@ export interface SafeCommitReport {
     highCount: number;
     mediumCount: number;
     lowCount: number;
+    byCategory: Record<FindingType, number>;
   };
 }

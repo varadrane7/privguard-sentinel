@@ -1,4 +1,4 @@
-name: SafeCommit Security Scan
+name: PrivGuard Nexus — AI Code Review
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [main, master]
 
 jobs:
-  safecommit-scan:
-    name: SafeCommit — Privacy & Threat Analysis
+  privguard-scan:
+    name: PrivGuard Nexus — Privacy, Security & Backdoor Analysis
     runs-on: ubuntu-latest
 
     steps:
@@ -21,19 +21,20 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: Install scanner dependencies
-        working-directory: packages/scanner
+      - name: Install dependencies
         run: npm ci
 
       - name: Build scanner
-        working-directory: packages/scanner
-        run: npm run build
+        run: npm run build --workspace=scanner
 
-      - name: Run SafeCommit scan
+      - name: Run PrivGuard scan
         id: scan
+        env:
+          LLM_API_URL: ${{ secrets.LLM_API_URL || 'http://localhost:11434' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY || '' }}
         run: |
-          node packages/scanner/dist/index.js . \
-            --output safecommit-report.json \
+          node scanner/dist/index.js . \
+            --output privguard-report.json \
             --fail-on-block
         continue-on-error: true
 
@@ -41,28 +42,36 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: safecommit-report
-          path: safecommit-report.json
+          name: privguard-report
+          path: privguard-report.json
           retention-days: 30
 
       - name: Post scan summary
         if: always()
         run: |
-          if [ -f safecommit-report.json ]; then
-            DECISION=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['overallDecision'])")
-            SCORE=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['scores']['overall'])")
-            FINDINGS=$(cat safecommit-report.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['summary']['totalFindings'])")
-            echo "## SafeCommit Scan Results" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          if [ -f privguard-report.json ]; then
+            DECISION=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['overallDecision'])")
+            OVERALL=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['overall'])")
+            PRIVACY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['privacy'])")
+            SECURITY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['security'])")
+            AI_SAFETY=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['aiSafety'])")
+            BACKDOOR=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['scores']['backdoorRisk'])")
+            FINDINGS=$(python3 -c "import sys,json; d=json.load(open('privguard-report.json')); print(d['summary']['totalFindings'])")
+            echo "## PrivGuard Nexus Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Score |" >> $GITHUB_STEP_SUMMARY
             echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
-            echo "| Decision | **${DECISION}** |" >> $GITHUB_STEP_SUMMARY
-            echo "| Overall Risk | ${SCORE}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Decision** | **${DECISION}** |" >> $GITHUB_STEP_SUMMARY
+            echo "| Overall Risk | ${OVERALL}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Privacy | ${PRIVACY}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Security | ${SECURITY}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| AI Safety | ${AI_SAFETY}/100 |" >> $GITHUB_STEP_SUMMARY
+            echo "| Backdoor Risk | ${BACKDOOR}/100 |" >> $GITHUB_STEP_SUMMARY
             echo "| Total Findings | ${FINDINGS} |" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Fail on BLOCK decision
+      - name: Block on Do Not Merge decision
         if: steps.scan.outcome == 'failure'
         run: |
-          echo "SafeCommit BLOCKED this deployment due to critical security/privacy findings."
-          echo "Review safecommit-report.json for details."
+          echo "PrivGuard Nexus blocked this deployment: Do Not Merge."
+          echo "Review privguard-report.json for details and fix all critical findings."
           exit 1

@@ -6,40 +6,75 @@ import { traverseDirectory, readFile } from "./traversal";
 import { scanFileContent } from "./rules";
 import { calculateScores, makeDecision } from "./scorer";
 import { analyzeWithLLM } from "./llm";
-import { SafeCommitReport } from "./types";
+import { Finding, FindingType, PrivGuardReport, PrivacyDiff } from "./types";
 
 const program = new Command();
 
 program
-  .name("safecommit")
-  .description("SafeCommit — Privacy & Insider Threat static analysis scanner")
-  .version("1.0.0")
+  .name("privguard")
+  .description("PrivGuard Nexus — Unified AI code review for privacy, security, and insider threats")
+  .version("2.0.0")
   .argument("<target>", "Directory or file to scan")
-  .option("-o, --output <file>", "Write JSON report to file", "safecommit-report.json")
+  .option("-o, --output <file>", "Write JSON report to file", "privguard-report.json")
   .option("--no-report", "Skip writing JSON report to disk")
-  .option("--fail-on-block", "Exit with code 1 if decision is BLOCK")
-  .option("--llm", "Enable Stage 2 LLM analysis via Ollama to reduce false positives")
-  .option("--llm-model <model>", "Ollama model to use for Stage 2", "mistral")
-  .option("--llm-url <url>", "Ollama base URL", "http://localhost:11434")
+  .option("--fail-on-block", "Exit with code 1 if decision is Do Not Merge")
+  .option("--llm", "Enable LLM reasoning agent (uses LLM_API_URL env var, defaults to local Ollama)")
+  .option("--llm-model <model>", "Model name", "llama3:8b")
+  .option("--llm-url <url>", "LLM base URL (overrides LLM_API_URL env var)")
   .parse(process.argv);
 
 const [target] = program.args;
 const opts = program.opts();
 
+const CATEGORY_LABELS: Record<FindingType, string> = {
+  privacy: "Privacy",
+  security: "Security",
+  quality: "Quality",
+  ai_safety: "AI Safety",
+  backdoor: "Backdoor",
+};
+
+function buildPrivacyDiff(findings: Finding[]): PrivacyDiff {
+  const piiFields = new Set<string>();
+  const thirdParties = new Set<string>();
+  let loggingFindings = 0;
+
+  for (const f of findings) {
+    if (f.type !== "privacy") continue;
+    if (f.ruleId === "P001" || f.ruleId === "P002" || f.ruleId === "P003") loggingFindings++;
+    if (f.ruleId === "P006") piiFields.add("credit_card");
+    if (f.ruleId === "P007") piiFields.add("location/IP");
+    const urlMatch = f.snippet.match(/https?:\/\/([a-zA-Z0-9.\-]+)/);
+    if (urlMatch && f.ruleId === "P004") thirdParties.add(urlMatch[1]);
+  }
+
+  const loggingRisk = loggingFindings >= 2 ? "high" : loggingFindings === 1 ? "medium" : "low";
+
+  return {
+    before: { piiFields: [], thirdParties: [], loggingRisk: "none" },
+    after: {
+      piiFields: Array.from(piiFields),
+      thirdParties: Array.from(thirdParties),
+      loggingRisk,
+    },
+    riskChangePct: Math.min(100, findings.filter((f) => f.type === "privacy").length * 12),
+  };
+}
+
 async function run() {
   const resolvedTarget = path.resolve(target);
 
   if (!fs.existsSync(resolvedTarget)) {
-    console.error(`[SafeCommit] ERROR: Target not found: ${resolvedTarget}`);
+    console.error(`[PrivGuard] ERROR: Target not found: ${resolvedTarget}`);
     process.exit(2);
   }
 
   const isFile = fs.statSync(resolvedTarget).isFile();
   const files = isFile ? [resolvedTarget] : traverseDirectory(resolvedTarget);
 
-  console.log(`\n[SafeCommit] Scanning ${files.length} file(s) in: ${resolvedTarget}\n`);
+  console.log(`\n[PrivGuard Nexus] Scanning ${files.length} file(s) in: ${resolvedTarget}\n`);
 
-  const allFindings = [];
+  const allFindings: Finding[] = [];
 
   for (const file of files) {
     const relativePath = path.relative(resolvedTarget, file);
@@ -48,47 +83,55 @@ async function run() {
       const content = readFile(file);
       const findings = scanFileContent(file, content);
       if (findings.length > 0) {
-        console.log(`    [!] ${findings.length} finding(s) detected`);
+        console.log(`    [!] ${findings.length} finding(s)`);
       }
       allFindings.push(...findings);
-    } catch (err) {
+    } catch {
       console.warn(`    [WARN] Could not read file: ${file}`);
     }
   }
 
-  // Stage 2: LLM analysis
+  // Stage 2: LLM reasoning agent
   let llmDismissed = 0;
   if (opts.llm) {
-    console.log(`\n[SafeCommit] Stage 2: Running LLM analysis (model: ${opts.llmModel})...\n`);
+    const llmUrl = opts.llmUrl ?? process.env.LLM_API_URL ?? "http://localhost:11434";
+    console.log(`\n[PrivGuard] LLM Reasoning Agent (model: ${opts.llmModel}, url: ${llmUrl})...\n`);
     for (const finding of allFindings) {
-      process.stdout.write(`  Analyzing: ${path.basename(finding.file)} line ${finding.line} ... `);
+      process.stdout.write(`  Reasoning: ${path.basename(finding.file)}:${finding.line} ... `);
       const result = await analyzeWithLLM(
         path.basename(finding.file),
         finding.line,
         finding.snippet,
         opts.llmModel,
-        opts.llmUrl
+        llmUrl
       );
       finding.llmConfirmed = result.isViolation;
       finding.llmViolationType = result.type;
       finding.llmReason = result.reason;
+      finding.llmFix = result.fix;
+      finding.llmIntent = result.intent;
       if (!result.isViolation) {
         llmDismissed++;
-        console.log(`DISMISSED (${result.reason.slice(0, 60)})`);
+        console.log(`DISMISSED — ${result.reason.slice(0, 70)}`);
       } else {
-        console.log(`CONFIRMED [${result.type}]`);
+        console.log(`CONFIRMED [${result.type}] intent=${result.intent}`);
       }
     }
-    console.log(`\n  LLM confirmed: ${allFindings.length - llmDismissed} | dismissed: ${llmDismissed}\n`);
+    console.log(`\n  Confirmed: ${allFindings.length - llmDismissed} | Dismissed: ${llmDismissed}\n`);
   }
 
-  // Score only confirmed findings when LLM is active
   const scoredFindings = opts.llm
     ? allFindings.filter((f) => f.llmConfirmed !== false)
     : allFindings;
 
   const scores = calculateScores(scoredFindings);
   const decision = makeDecision(scores, scoredFindings);
+  const privacyDiff = buildPrivacyDiff(scoredFindings);
+
+  const byCategory = (["quality", "security", "privacy", "ai_safety", "backdoor"] as FindingType[]).reduce(
+    (acc, t) => ({ ...acc, [t]: scoredFindings.filter((f) => f.type === t).length }),
+    {} as Record<FindingType, number>
+  );
 
   const severityCounts = {
     criticalCount: scoredFindings.filter((f) => f.severity === "CRITICAL").length,
@@ -97,59 +140,63 @@ async function run() {
     lowCount: scoredFindings.filter((f) => f.severity === "LOW").length,
   };
 
-  const report: SafeCommitReport = {
-    version: "1.0",
+  const report: PrivGuardReport = {
+    version: "2.0",
     timestamp: new Date().toISOString(),
     scannedDirectory: resolvedTarget,
     overallDecision: decision,
     scores,
     findings: allFindings,
+    privacyDiff,
     summary: {
       totalFiles: files.length,
       totalFindings: scoredFindings.length,
       ...severityCounts,
+      byCategory,
     },
   };
 
   // Console output
-  console.log("\n" + "=".repeat(60));
-  console.log("  SafeCommit Scan Results");
-  console.log("=".repeat(60));
-  console.log(`  Decision   : ${decision}`);
-  console.log(`  Overall    : ${scores.overall}/100`);
-  console.log(`  Privacy    : ${scores.privacy}/100`);
-  console.log(`  Threat     : ${scores.threat}/100`);
-  console.log(`  Confidence : ${scores.confidence}%`);
-  console.log(`  Findings   : ${scoredFindings.length} total (${severityCounts.criticalCount} critical, ${severityCounts.highCount} high)`);
-  if (opts.llm && llmDismissed > 0) {
-    console.log(`  Dismissed  : ${llmDismissed} false positive(s) by LLM`);
-  }
-  console.log("=".repeat(60));
+  const decisionColor = decision === "Safe to Merge" ? "✅" : decision === "Needs Review" ? "⚠️ " : "🚫";
+  console.log("\n" + "═".repeat(64));
+  console.log("  PrivGuard Nexus — Scan Results");
+  console.log("═".repeat(64));
+  console.log(`  Decision     : ${decisionColor} ${decision}`);
+  console.log(`  Overall Risk : ${scores.overall}/100`);
+  console.log(`  Privacy      : ${scores.privacy}/100`);
+  console.log(`  Security     : ${scores.security}/100`);
+  console.log(`  AI Safety    : ${scores.aiSafety}/100`);
+  console.log(`  Backdoor     : ${scores.backdoorRisk}/100`);
+  console.log(`  Confidence   : ${scores.confidence}%`);
+  console.log(`  Findings     : ${scoredFindings.length} total (${severityCounts.criticalCount} critical, ${severityCounts.highCount} high)`);
+  if (byCategory.quality) console.log(`  Quality      : ${byCategory.quality} issue(s)`);
+  if (opts.llm && llmDismissed > 0) console.log(`  LLM dismissed: ${llmDismissed} false positive(s)`);
+  console.log("═".repeat(64));
 
   if (scoredFindings.length > 0) {
     console.log("\n  Findings:\n");
     for (const f of scoredFindings) {
-      console.log(`  [${f.severity}] ${f.ruleTriggered}`);
-      console.log(`     File: ${path.relative(resolvedTarget, f.file)} (line ${f.line})`);
-      if (f.llmReason) console.log(`     LLM : ${f.llmReason}`);
-      console.log(`     Fix : ${f.recommendation}`);
+      console.log(`  [${f.severity}] [${CATEGORY_LABELS[f.type]}] ${f.ruleTriggered} (${f.ruleId})`);
+      console.log(`     File  : ${path.relative(resolvedTarget, f.file)} (line ${f.line})`);
+      console.log(`     Why   : ${f.whyItMatters.slice(0, 100)}`);
+      if (f.llmReason) console.log(`     LLM   : ${f.llmReason.slice(0, 100)}`);
+      console.log(`     Fix   : ${f.recommendation}`);
       console.log();
     }
   }
 
-  // Write JSON report
   if (opts.report !== false) {
     const outputPath = path.resolve(opts.output);
     fs.writeFileSync(outputPath, JSON.stringify(report, null, 2));
-    console.log(`  Report saved to: ${outputPath}\n`);
+    console.log(`  Report → ${outputPath}\n`);
   }
 
-  if (opts.failOnBlock && decision === "BLOCK") {
+  if (opts.failOnBlock && decision === "Do Not Merge") {
     process.exit(1);
   }
 }
 
 run().catch((err) => {
-  console.error("[SafeCommit] Fatal error:", err);
+  console.error("[PrivGuard] Fatal error:", err);
   process.exit(2);
 });

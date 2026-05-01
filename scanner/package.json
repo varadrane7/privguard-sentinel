@@ -1,10 +1,10 @@
 {
-  "name": "safecommit-scanner",
-  "version": "1.0.0",
-  "description": "SafeCommit static analysis scanner CLI",
+  "name": "privguard-scanner",
+  "version": "2.0.0",
+  "description": "PrivGuard Nexus — unified AI code review scanner CLI",
   "main": "dist/index.js",
   "bin": {
-    "safecommit": "./dist/index.js"
+    "privguard": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

@@ -1,64 +1,355 @@
-import { prisma } from "@/lib/prisma";
-import Link from "next/link";
+"use client";
 
-function DecisionBadge({ decision }: { decision: string }) {
-  const colors: Record<string, string> = {
-    BLOCK: "bg-red-100 text-red-800 border border-red-300",
-    WARNING: "bg-yellow-100 text-yellow-800 border border-yellow-300",
-    PASS: "bg-green-100 text-green-800 border border-green-300",
-  };
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors[decision] ?? "bg-gray-100 text-gray-800"}`}>
-      {decision}
-    </span>
-  );
+import { useState, useEffect, useCallback } from "react";
+import { PrivGuardReport, Finding, FindingType, DecisionType } from "@/lib/reportTypes";
+import { DEMO_SCENARIOS } from "@/lib/demoData";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function riskColor(score: number): string {
+  if (score <= 30) return "#10b981";
+  if (score <= 60) return "#f59e0b";
+  if (score <= 80) return "#f97316";
+  return "#f43f5e";
 }
 
-function ScoreBar({ value, color }: { value: number; color: string }) {
+function riskGaugeClass(score: number): string {
+  if (score <= 30) return "gauge-safe";
+  if (score <= 60) return "gauge-warn";
+  if (score <= 80) return "gauge-high";
+  return "gauge-crit";
+}
+
+const DECISION_STYLE: Record<DecisionType, { cls: string; icon: string }> = {
+  "Safe to Merge": { cls: "decision-safe",   icon: "✅" },
+  "Needs Review":  { cls: "decision-review", icon: "⚠️" },
+  "Do Not Merge":  { cls: "decision-block",  icon: "🚫" },
+};
+
+const CAT_LABELS: Record<FindingType, string> = {
+  privacy:   "Privacy",
+  security:  "Security",
+  quality:   "Quality",
+  ai_safety: "AI Safety",
+  backdoor:  "Backdoor",
+};
+
+const SEV_ORDER: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+
+// ── ScoreGauge ────────────────────────────────────────────────────────────────
+
+function ScoreGauge({ label, score }: { label: string; score: number }) {
+  const R = 38;
+  const CIRC = 2 * Math.PI * R;
+  const offset = CIRC * (1 - score / 100);
+  const color = riskColor(score);
+
   return (
-    <div className="w-full bg-gray-100 rounded-full h-2">
-      <div
-        className={`h-2 rounded-full ${color}`}
-        style={{ width: `${Math.min(100, value)}%` }}
-      />
+    <div className="flex flex-col items-center gap-1 group">
+      <div className={`relative ${riskGaugeClass(score)}`}>
+        <svg viewBox="0 0 100 100" className="w-24 h-24 -rotate-90 transition-all duration-700">
+          <circle cx="50" cy="50" r={R} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="7" />
+          <circle
+            cx="50" cy="50" r={R} fill="none"
+            stroke={color} strokeWidth="7"
+            strokeDasharray={CIRC}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: "stroke-dashoffset 0.9s cubic-bezier(0.4,0,0.2,1)" }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-xl font-bold" style={{ color }}>{score}</span>
+        </div>
+      </div>
+      <span className="text-xs text-gray-400 group-hover:text-gray-300 transition-colors">{label}</span>
     </div>
   );
 }
 
-export default async function DashboardPage() {
-  const reports = await prisma.report.findMany({
-    orderBy: { createdAt: "desc" },
-    include: { findings: true },
-  });
+// ── IssueCard ────────────────────────────────────────────────────────────────
 
-  const latest = reports[0];
+function IssueCard({ f }: { f: Finding }) {
+  const [open, setOpen] = useState(false);
+  const sevCls = `badge-${f.severity.toLowerCase()}`;
+  const catCls = `cat-${f.type}`;
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
-      {/* Header */}
-      <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">SC</div>
-          <span className="text-lg font-semibold tracking-tight">SafeCommit</span>
-          <span className="text-gray-500 text-sm">Privacy & Threat Guardian</span>
+    <div
+      className="glass card-hover cursor-pointer overflow-hidden"
+      onClick={() => setOpen(!open)}
+    >
+      <div className="flex items-start gap-3 p-4">
+        <div className="flex flex-col items-start gap-2 min-w-0 flex-1">
+          <div className="flex items-center flex-wrap gap-2">
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${sevCls}`}>{f.severity}</span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${catCls}`}>{CAT_LABELS[f.type]}</span>
+            <span className="text-xs text-gray-500 font-mono">{f.ruleId}</span>
+          </div>
+          <p className="text-sm font-semibold text-gray-100">{f.ruleTriggered}</p>
+          <p className="text-xs text-gray-400 font-mono">
+            {f.file.split("/").slice(-2).join("/")} · line {f.line}
+          </p>
         </div>
-        <span className="text-gray-500 text-sm">{reports.length} scan{reports.length !== 1 ? "s" : ""} recorded</span>
-      </header>
+        <span className={`text-gray-500 text-sm transition-transform duration-200 ${open ? "rotate-180" : ""}`}>▼</span>
+      </div>
 
-      <main className="px-8 py-8 max-w-6xl mx-auto space-y-8">
-        {reports.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32 text-center">
-            <div className="text-6xl mb-4">🛡️</div>
-            <h2 className="text-2xl font-bold mb-2">No scans yet</h2>
-            <p className="text-gray-400 max-w-md">
-              Run the SafeCommit scanner and POST the <code className="bg-gray-800 px-1 rounded">safecommit-report.json</code> to <code className="bg-gray-800 px-1 rounded">/api/reports</code> to see results here.
+      {open && (
+        <div className="border-t border-white/5 px-4 pb-4 pt-3 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Evidence</p>
+            <div className="snippet">{f.snippet.slice(0, 400)}</div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Why it matters</p>
+            <p className="text-sm text-gray-300">{f.whyItMatters || f.recommendation}</p>
+          </div>
+          {f.llmReason && (
+            <div>
+              <p className="text-xs font-semibold text-yellow-500/70 uppercase tracking-wide mb-1">🤖 AI Analysis</p>
+              <p className="text-sm text-yellow-200/80">{f.llmReason}</p>
+              {f.llmIntent && (
+                <span className={`inline-block mt-1 text-xs px-2 py-0.5 rounded-full font-medium ${
+                  f.llmIntent === "malicious" ? "badge-critical" :
+                  f.llmIntent === "suspicious" ? "badge-high" :
+                  f.llmIntent === "negligent" ? "badge-medium" : "badge-low"
+                }`}>Intent: {f.llmIntent}</span>
+              )}
+            </div>
+          )}
+          <div>
+            <p className="text-xs font-semibold text-emerald-500/70 uppercase tracking-wide mb-1">Suggested Fix</p>
+            {f.llmFix ? (
+              <p className="text-sm text-emerald-300/80">{f.llmFix}</p>
+            ) : (
+              <p className="text-sm text-gray-300">{f.recommendation}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PrivacyDiffTimeline ───────────────────────────────────────────────────────
+
+function PrivacyDiffTimeline({ diff }: { report: PrivGuardReport; diff: PrivGuardReport["privacyDiff"] }) {
+  const hasChanges = diff.riskChangePct > 0 ||
+    JSON.stringify(diff.before) !== JSON.stringify(diff.after);
+
+  const loggingColor: Record<string, string> = {
+    none: "text-emerald-400", low: "text-yellow-400",
+    medium: "text-orange-400", high: "text-rose-400",
+  };
+
+  return (
+    <div className="glass p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-gray-200 uppercase tracking-widest">Privacy Impact Timeline</h2>
+        {diff.riskChangePct > 0 ? (
+          <span className="text-rose-400 font-bold text-sm">+{diff.riskChangePct}% risk change</span>
+        ) : (
+          <span className="text-emerald-400 font-bold text-sm">No change</span>
+        )}
+      </div>
+
+      {!hasChanges ? (
+        <p className="text-sm text-gray-500">This PR does not change the privacy risk profile.</p>
+      ) : (
+        <div className="grid grid-cols-2 gap-4">
+          {(["before", "after"] as const).map((phase) => (
+            <div key={phase} className={`rounded-xl p-4 space-y-2 border ${
+              phase === "before"
+                ? "bg-white/3 border-white/5"
+                : "bg-rose-500/5 border-rose-500/20"
+            }`}>
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">
+                {phase === "before" ? "Before PR" : "After PR"}
+              </p>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">PII Collected</p>
+                {diff[phase].piiFields.length === 0
+                  ? <p className="text-xs text-emerald-400">None</p>
+                  : diff[phase].piiFields.map((f) => (
+                      <span key={f} className="inline-block text-xs bg-white/5 px-2 py-0.5 rounded-full mr-1 mb-1">{f}</span>
+                    ))
+                }
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Third Parties</p>
+                {diff[phase].thirdParties.length === 0
+                  ? <p className="text-xs text-emerald-400">None</p>
+                  : diff[phase].thirdParties.map((t) => (
+                      <span key={t} className="inline-block text-xs bg-rose-500/10 text-rose-300 px-2 py-0.5 rounded-full mr-1">{t}</span>
+                    ))
+                }
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Logging Risk</p>
+                <p className={`text-xs font-semibold capitalize ${loggingColor[diff[phase].loggingRisk] ?? "text-gray-400"}`}>
+                  {diff[phase].loggingRisk}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const [report, setReport] = useState<PrivGuardReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeDemo, setActiveDemo] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FindingType | "all">("all");
+  const [history, setHistory] = useState<PrivGuardReport[]>([]);
+
+  const loadLatest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/reports");
+      if (!res.ok) return;
+      const data: Array<{
+        timestamp: string; scannedDirectory: string; overallDecision: string;
+        overallScore: number; privacyScore: number; securityScore: number;
+        aiSafetyScore: number; backdoorRiskScore: number; confidenceScore: number;
+        totalFiles: number; totalFindings: number; criticalCount: number; highCount: number;
+        mediumCount: number; lowCount: number; qualityCount: number; securityCount: number;
+        privacyCount: number; aiSafetyCount: number; backdoorCount: number;
+        privacyDiffJson: string | null;
+        findings: Array<{
+          findingId: string; type: string; severity: string; file: string; line: number;
+          snippet: string; ruleId: string; ruleTriggered: string; recommendation: string;
+          whyItMatters: string; llmReason?: string; llmFix?: string; llmIntent?: string;
+        }>;
+      }> = await res.json();
+
+      if (!Array.isArray(data) || data.length === 0) return;
+
+      const mapped: PrivGuardReport[] = data.map((r) => ({
+        version: "2.0",
+        timestamp: r.timestamp,
+        scannedDirectory: r.scannedDirectory,
+        overallDecision: r.overallDecision as DecisionType,
+        scores: {
+          overall: r.overallScore, privacy: r.privacyScore, security: r.securityScore,
+          aiSafety: r.aiSafetyScore, backdoorRisk: r.backdoorRiskScore, confidence: r.confidenceScore,
+        },
+        findings: r.findings.map((f) => ({
+          id: f.findingId, type: f.type as FindingType, severity: f.severity as Finding["severity"],
+          file: f.file, line: f.line, snippet: f.snippet, ruleId: f.ruleId,
+          ruleTriggered: f.ruleTriggered, recommendation: f.recommendation,
+          whyItMatters: f.whyItMatters, llmReason: f.llmReason, llmFix: f.llmFix, llmIntent: f.llmIntent,
+        })),
+        privacyDiff: r.privacyDiffJson
+          ? JSON.parse(r.privacyDiffJson)
+          : { before: { piiFields: [], thirdParties: [], loggingRisk: "none" }, after: { piiFields: [], thirdParties: [], loggingRisk: "none" }, riskChangePct: 0 },
+        summary: {
+          totalFiles: r.totalFiles, totalFindings: r.totalFindings,
+          criticalCount: r.criticalCount, highCount: r.highCount,
+          mediumCount: r.mediumCount, lowCount: r.lowCount,
+          byCategory: { quality: r.qualityCount, security: r.securityCount, privacy: r.privacyCount, ai_safety: r.aiSafetyCount, backdoor: r.backdoorCount },
+        },
+      }));
+
+      setHistory(mapped);
+      setReport(mapped[0]);
+    } catch {
+      // API unavailable — no-op, demo mode still works
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadLatest(); }, [loadLatest]);
+
+  const selectDemo = (key: string) => {
+    setActiveDemo(key);
+    setReport(DEMO_SCENARIOS[key].report);
+    setFilter("all");
+  };
+
+  const clearDemo = () => {
+    setActiveDemo(null);
+    if (history.length > 0) setReport(history[0]);
+    else setReport(null);
+  };
+
+  const displayed = report;
+  const filteredFindings = (displayed?.findings ?? [])
+    .filter((f) => filter === "all" || f.type === filter)
+    .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9));
+
+  const catCounts = (displayed?.summary.byCategory) ?? { quality: 0, security: 0, privacy: 0, ai_safety: 0, backdoor: 0 };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-12 h-12 border-2 border-indigo-500/40 border-t-indigo-500 rounded-full animate-spin mx-auto" />
+          <p className="text-gray-400 text-sm">Loading PrivGuard Nexus...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen text-gray-100">
+      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              PrivGuard Nexus
+            </h1>
+            <p className="text-xs text-gray-500 mt-0.5">Unified AI Code Review · Privacy · Security · Backdoor · AI Safety</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeDemo && (
+              <button onClick={clearDemo} className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-gray-200 hover:border-white/20 transition-colors">
+                ✕ Exit Demo
+              </button>
+            )}
+            <span className={`text-xs px-3 py-1.5 rounded-full font-medium ${activeDemo ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"}`}>
+              {activeDemo ? "DEMO MODE" : history.length > 0 ? "LIVE" : "NO DATA"}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Demo Buttons ──────────────────────────────────────────────── */}
+        <div className="glass p-4">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Demo Scenarios</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(DEMO_SCENARIOS).map(([key, s]) => (
+              <button
+                key={key}
+                onClick={() => selectDemo(key)}
+                className={`group text-left px-4 py-2 rounded-xl border transition-all duration-200 ${
+                  activeDemo === key
+                    ? "border-indigo-500/60 bg-indigo-500/20 text-indigo-200"
+                    : "border-white/8 bg-white/3 text-gray-400 hover:border-white/20 hover:text-gray-200 hover:bg-white/6"
+                }`}
+              >
+                <p className="text-sm font-semibold">{s.label}</p>
+                <p className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors">{s.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!displayed ? (
+          /* ── Empty State ────────────────────────────────────────────── */
+          <div className="glass p-12 text-center space-y-4">
+            <div className="text-5xl">🔍</div>
+            <h2 className="text-xl font-bold text-gray-200">No scans yet</h2>
+            <p className="text-gray-400 text-sm max-w-lg mx-auto">
+              Run the scanner against your repository, then POST the report to this dashboard, or click a Demo Scenario above.
             </p>
-            <pre className="mt-6 bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm text-green-400 text-left">
-{`# Scan the sample app:
-npx ts-node packages/scanner/src/index.ts \\
-  packages/sample-app/src -o report.json
-
-# Send to dashboard:
+            <pre className="text-xs text-left inline-block bg-black/40 px-4 py-3 rounded-xl text-indigo-300 mt-4">
+              {`node scanner/dist/index.js ./your-app -o report.json
 curl -X POST http://localhost:3000/api/reports \\
   -H "Content-Type: application/json" \\
   -d @report.json`}
@@ -66,123 +357,146 @@ curl -X POST http://localhost:3000/api/reports \\
           </div>
         ) : (
           <>
-            {/* Latest scan hero */}
-            {latest && (
-              <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-                <div className="flex items-start justify-between mb-6">
-                  <div>
-                    <h2 className="text-xl font-semibold mb-1">Latest Scan</h2>
-                    <p className="text-gray-400 text-sm">{latest.scannedDirectory}</p>
-                    <p className="text-gray-600 text-xs mt-1">{new Date(latest.timestamp).toLocaleString()}</p>
-                  </div>
-                  <DecisionBadge decision={latest.overallDecision} />
+            {/* ── Decision Banner ─────────────────────────────────────────── */}
+            <div className={`glass p-6 flex items-center justify-between flex-wrap gap-4 ${DECISION_STYLE[displayed.overallDecision].cls}`}>
+              <div className="flex items-center gap-4">
+                <span className="text-4xl">{DECISION_STYLE[displayed.overallDecision].icon}</span>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest opacity-70">Merge Recommendation</p>
+                  <h2 className="text-2xl font-extrabold">{displayed.overallDecision}</h2>
                 </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  {[
-                    { label: "Overall Risk", value: latest.overallScore, color: "bg-red-500" },
-                    { label: "Privacy Score", value: latest.privacyScore, color: "bg-orange-500" },
-                    { label: "Threat Score", value: latest.threatScore, color: "bg-purple-500" },
-                    { label: "Confidence", value: latest.confidenceScore, color: "bg-blue-500" },
-                  ].map((s) => (
-                    <div key={s.label} className="bg-gray-800 rounded-xl p-4">
-                      <div className="text-2xl font-bold mb-1">{s.value}<span className="text-sm text-gray-400">/100</span></div>
-                      <div className="text-xs text-gray-400 mb-2">{s.label}</div>
-                      <ScoreBar value={s.value} color={s.color} />
-                    </div>
-                  ))}
+              </div>
+              <div className="flex gap-6 text-sm">
+                <div className="text-center">
+                  <p className="text-2xl font-bold">{displayed.summary.totalFiles}</p>
+                  <p className="text-xs opacity-60">files</p>
                 </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {[
-                    { label: "Critical", count: latest.criticalCount, color: "text-red-400" },
-                    { label: "High", count: latest.highCount, color: "text-orange-400" },
-                    { label: "Medium", count: latest.mediumCount, color: "text-yellow-400" },
-                    { label: "Low", count: latest.lowCount, color: "text-blue-400" },
-                  ].map((s) => (
-                    <div key={s.label} className="bg-gray-800 rounded-lg px-4 py-3 flex items-center gap-3">
-                      <span className={`text-2xl font-bold ${s.color}`}>{s.count}</span>
-                      <span className="text-sm text-gray-400">{s.label}</span>
-                    </div>
-                  ))}
+                <div className="text-center">
+                  <p className="text-2xl font-bold">{displayed.summary.totalFindings}</p>
+                  <p className="text-xs opacity-60">findings</p>
                 </div>
-              </section>
-            )}
-
-            {/* Findings table for latest scan */}
-            {latest && latest.findings.length > 0 && (
-              <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-                <h2 className="text-lg font-semibold mb-4">Findings — Latest Scan</h2>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-800 text-gray-400 text-left">
-                        <th className="pb-3 pr-4">Severity</th>
-                        <th className="pb-3 pr-4">Rule</th>
-                        <th className="pb-3 pr-4">File</th>
-                        <th className="pb-3 pr-4">Line</th>
-                        <th className="pb-3">Type</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-800">
-                      {latest.findings.map((f) => (
-                        <tr key={f.id} className="hover:bg-gray-800/50 transition-colors">
-                          <td className="py-3 pr-4">
-                            <SeverityBadge severity={f.severity} />
-                          </td>
-                          <td className="py-3 pr-4 font-medium">{f.ruleTriggered}</td>
-                          <td className="py-3 pr-4 text-gray-400 font-mono text-xs truncate max-w-xs">
-                            {f.file.split(/[\\/]/).slice(-2).join("/")}:{f.line}
-                          </td>
-                          <td className="py-3 pr-4 text-gray-500">{f.line}</td>
-                          <td className="py-3">
-                            <span className={`text-xs px-2 py-0.5 rounded ${f.type === "privacy" ? "bg-orange-900/40 text-orange-400" : "bg-purple-900/40 text-purple-400"}`}>
-                              {f.type}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="text-center">
+                  <p className="text-2xl font-bold">{displayed.summary.criticalCount}</p>
+                  <p className="text-xs opacity-60">critical</p>
                 </div>
-              </section>
-            )}
+                <div className="text-center">
+                  <p className="text-2xl font-bold">{displayed.scores.confidence}%</p>
+                  <p className="text-xs opacity-60">confidence</p>
+                </div>
+              </div>
+            </div>
 
-            {/* All scans history */}
-            <section className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-              <h2 className="text-lg font-semibold mb-4">Scan History</h2>
-              <div className="space-y-3">
-                {reports.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between bg-gray-800 rounded-xl px-5 py-4">
-                    <div>
-                      <div className="font-mono text-sm text-gray-200">{r.scannedDirectory.split(/[\\/]/).slice(-2).join("/")}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{new Date(r.timestamp).toLocaleString()} · {r.totalFindings} findings in {r.totalFiles} files</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-gray-400">{r.overallScore}/100</span>
-                      <DecisionBadge decision={r.overallDecision} />
-                    </div>
-                  </div>
+            {/* ── 5 Score Gauges ───────────────────────────────────────────── */}
+            <div className="glass p-6">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-5">Risk Intelligence Scores</p>
+              <div className="flex justify-around flex-wrap gap-6">
+                <ScoreGauge label="Overall Risk"  score={displayed.scores.overall} />
+                <ScoreGauge label="Privacy"       score={displayed.scores.privacy} />
+                <ScoreGauge label="Security"      score={displayed.scores.security} />
+                <ScoreGauge label="AI Safety"     score={displayed.scores.aiSafety} />
+                <ScoreGauge label="Backdoor Risk" score={displayed.scores.backdoorRisk} />
+              </div>
+              {/* Severity breakdown */}
+              <div className="mt-5 pt-4 border-t border-white/5 flex flex-wrap gap-3">
+                {[
+                  { label: "Critical", count: displayed.summary.criticalCount, cls: "badge-critical" },
+                  { label: "High",     count: displayed.summary.highCount,     cls: "badge-high" },
+                  { label: "Medium",   count: displayed.summary.mediumCount,   cls: "badge-medium" },
+                  { label: "Low",      count: displayed.summary.lowCount,      cls: "badge-low" },
+                ].map(({ label, count, cls }) => (
+                  <span key={label} className={`text-xs font-semibold px-3 py-1 rounded-full ${cls}`}>
+                    {count} {label}
+                  </span>
                 ))}
               </div>
-            </section>
+            </div>
+
+            {/* ── Privacy Diff Timeline ─────────────────────────────────────── */}
+            <PrivacyDiffTimeline report={displayed} diff={displayed.privacyDiff} />
+
+            {/* ── Findings ─────────────────────────────────────────────────── */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
+                  Findings ({filteredFindings.length})
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setFilter("all")}
+                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${filter === "all" ? "border-indigo-500/60 bg-indigo-500/20 text-indigo-200" : "border-white/8 text-gray-400 hover:text-gray-200 hover:border-white/20"}`}
+                  >
+                    All {displayed.summary.totalFindings}
+                  </button>
+                  {(Object.entries(catCounts) as [FindingType, number][])
+                    .filter(([, c]) => c > 0)
+                    .map(([type, count]) => (
+                      <button
+                        key={type}
+                        onClick={() => setFilter(type)}
+                        className={`text-xs px-3 py-1.5 rounded-lg border transition-colors cat-${type} ${filter === type ? "opacity-100" : "opacity-60 hover:opacity-80"}`}
+                      >
+                        {CAT_LABELS[type]} {count}
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              {filteredFindings.length === 0 ? (
+                <div className="glass p-8 text-center">
+                  <p className="text-emerald-400 text-4xl mb-2">✅</p>
+                  <p className="text-gray-300 font-semibold">
+                    {filter === "all" ? "No findings detected" : `No ${CAT_LABELS[filter as FindingType]} issues found`}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {filteredFindings.map((f) => <IssueCard key={f.id} f={f} />)}
+                </div>
+              )}
+            </div>
           </>
         )}
-      </main>
-    </div>
-  );
-}
 
-function SeverityBadge({ severity }: { severity: string }) {
-  const map: Record<string, string> = {
-    CRITICAL: "bg-red-900/50 text-red-400 border border-red-800",
-    HIGH: "bg-orange-900/50 text-orange-400 border border-orange-800",
-    MEDIUM: "bg-yellow-900/50 text-yellow-400 border border-yellow-800",
-    LOW: "bg-blue-900/50 text-blue-400 border border-blue-800",
-  };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded font-mono font-semibold ${map[severity] ?? "bg-gray-800 text-gray-400"}`}>
-      {severity}
-    </span>
+        {/* ── Scan History ─────────────────────────────────────────────── */}
+        {history.length > 1 && !activeDemo && (
+          <div className="glass p-5 space-y-3">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Scan History</p>
+            <div className="space-y-2">
+              {history.map((r, i) => {
+                const ds = DECISION_STYLE[r.overallDecision];
+                return (
+                  <button
+                    key={i}
+                    onClick={() => { setReport(r); setFilter("all"); }}
+                    className={`w-full glass card-hover text-left p-3 flex items-center justify-between gap-4 ${
+                      report === r ? "ring-1 ring-indigo-500/40" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg">{ds.icon}</span>
+                      <div>
+                        <p className={`text-sm font-semibold ${ds.cls.replace("decision-", "text-")}`}>
+                          {r.overallDecision}
+                        </p>
+                        <p className="text-xs text-gray-500">{r.scannedDirectory}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-gray-400 shrink-0">
+                      <span>{r.summary.totalFindings} findings</span>
+                      <span>{new Date(r.timestamp).toLocaleDateString()}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Footer ───────────────────────────────────────────────────── */}
+        <div className="text-center py-4">
+          <p className="text-xs text-gray-600">PrivGuard Nexus v2.0 · Unified AI Code Review</p>
+        </div>
+      </div>
+    </div>
   );
 }

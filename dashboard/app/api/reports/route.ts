@@ -4,16 +4,18 @@ import { prisma } from "@/lib/prisma";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { scores, summary, findings, overallDecision, scannedDirectory, timestamp } = body;
+    const { scores, summary, findings, overallDecision, scannedDirectory, timestamp, privacyDiff } = body;
 
     const report = await prisma.report.create({
       data: {
         timestamp,
         scannedDirectory,
         overallDecision,
-        privacyScore: scores.privacy,
-        threatScore: scores.threat,
         overallScore: scores.overall,
+        privacyScore: scores.privacy,
+        securityScore: scores.security ?? 0,
+        aiSafetyScore: scores.aiSafety ?? 0,
+        backdoorRiskScore: scores.backdoorRisk ?? 0,
         confidenceScore: scores.confidence,
         totalFiles: summary.totalFiles,
         totalFindings: summary.totalFindings,
@@ -21,10 +23,18 @@ export async function POST(req: NextRequest) {
         highCount: summary.highCount,
         mediumCount: summary.mediumCount,
         lowCount: summary.lowCount,
+        qualityCount: summary.byCategory?.quality ?? 0,
+        securityCount: summary.byCategory?.security ?? 0,
+        privacyCount: summary.byCategory?.privacy ?? 0,
+        aiSafetyCount: summary.byCategory?.ai_safety ?? 0,
+        backdoorCount: summary.byCategory?.backdoor ?? 0,
+        privacyDiffJson: privacyDiff ? JSON.stringify(privacyDiff) : null,
         findings: {
           create: findings.map((f: {
-            id: string; type: string; severity: string; file: string;
-            line: number; snippet: string; ruleTriggered: string; recommendation: string;
+            id: string; type: string; severity: string; file: string; line: number;
+            snippet: string; ruleId?: string; ruleTriggered: string;
+            recommendation: string; whyItMatters?: string;
+            llmReason?: string; llmFix?: string; llmIntent?: string;
           }) => ({
             findingId: f.id,
             type: f.type,
@@ -32,8 +42,13 @@ export async function POST(req: NextRequest) {
             file: f.file,
             line: f.line,
             snippet: f.snippet,
+            ruleId: f.ruleId ?? "",
             ruleTriggered: f.ruleTriggered,
             recommendation: f.recommendation,
+            whyItMatters: f.whyItMatters ?? "",
+            llmReason: f.llmReason,
+            llmFix: f.llmFix,
+            llmIntent: f.llmIntent,
           })),
         },
       },

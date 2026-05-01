@@ -8,34 +8,47 @@ datasource db {
 }
 
 model Report {
-  id               String    @id @default(cuid())
-  createdAt        DateTime  @default(now())
-  timestamp        String
-  scannedDirectory String
-  overallDecision  String
-  privacyScore     Int
-  threatScore      Int
-  overallScore     Int
-  confidenceScore  Int
-  totalFiles       Int
-  totalFindings    Int
-  criticalCount    Int
-  highCount        Int
-  mediumCount      Int
-  lowCount         Int
-  findings         Finding[]
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  timestamp         String
+  scannedDirectory  String
+  overallDecision   String
+  overallScore      Int
+  privacyScore      Int
+  securityScore     Int
+  aiSafetyScore     Int
+  backdoorRiskScore Int
+  confidenceScore   Int
+  totalFiles        Int
+  totalFindings     Int
+  criticalCount     Int
+  highCount         Int
+  mediumCount       Int
+  lowCount          Int
+  qualityCount      Int       @default(0)
+  securityCount     Int       @default(0)
+  privacyCount      Int       @default(0)
+  aiSafetyCount     Int       @default(0)
+  backdoorCount     Int       @default(0)
+  privacyDiffJson   String?
+  findings          Finding[]
 }
 
 model Finding {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   findingId      String
   type           String
   severity       String
   file           String
   line           Int
   snippet        String
+  ruleId         String  @default("")
   ruleTriggered  String
   recommendation String
+  whyItMatters   String  @default("")
+  llmReason      String?
+  llmFix         String?
+  llmIntent      String?
   reportId       String
-  report         Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  report         Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
 }
