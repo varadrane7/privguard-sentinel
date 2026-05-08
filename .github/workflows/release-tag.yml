@@ -1,0 +1,31 @@
+name: Update Major Tag
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to move tags
+
+      - name: Update Major Version Tag
+        run: |
+          # Extract major version from the release tag (e.g., v1.0.0 -> v1)
+          MAJOR_VERSION=$(echo ${{ github.ref_name }} | cut -d. -f1)
+          echo "Updating tag $MAJOR_VERSION to point to ${{ github.sha }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Force update the major tag locally
+          git tag -fa $MAJOR_VERSION -m "Update $MAJOR_VERSION tag for release ${{ github.ref_name }}"
+          
+          # Force push the updated tag to remote
+          git push origin $MAJOR_VERSION --force

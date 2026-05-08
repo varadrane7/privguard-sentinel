@@ -1,6 +1,6 @@
 {
   "name": "privguard-scanner",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "PrivGuard Nexus — unified AI code review scanner CLI",
   "main": "dist/index.js",
   "bin": {
