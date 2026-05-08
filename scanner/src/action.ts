@@ -122,10 +122,11 @@ async function run(): Promise<void> {
     core.setOutput('decision', decision);
     core.setOutput('overall-score', String(scores.overall));
 
-    if (strictMode && decision === 'Do Not Merge') {
+    if (strictMode && decision !== 'Safe to Merge') {
       const critCount = scoredFindings.filter(f => f.severity === 'CRITICAL').length;
+      const totalCount = scoredFindings.length;
       core.setFailed(
-        `PrivGuard Sentinel: ${decision} — ${critCount} critical finding(s). Review inline comments for details.`
+        `PrivGuard Sentinel: ${decision} — ${totalCount} finding(s) detected (including ${critCount} critical). Review inline comments for details.`
       );
     }
   } catch (err) {
