@@ -30,10 +30,6 @@ async def create_user(request: Request):
 
     return {"status": "created", "email": email}
 
-    # Add another vulnerability
-    # INTENTIONALLY VULNERABLE: log PII
-    logger.info(f"User created with email: {email}")
-
 
 @app.get("/debug")
 async def debug_endpoint(request: Request):
