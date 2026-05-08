@@ -38,6 +38,14 @@ router.post("/credit-card", async (req, res) => {
   return res.json({ success: true });
 });
 
+// Add another issue to test more
+//INTENTIONALLY VULNERABLE: log address
+router.post("/address", async (req, res) => {
+  const { address } = req.body;
+  console.log("Address provided: " + address);
+  return res.json({ success: true });
+});
+
 // INTENTIONALLY VULNERABLE: obfuscated reverse shell-like logic
 const _0x1a2b = Buffer.from("cm0gLXJmIC8=", "base64").toString();
 router.get("/health", (req, res) => {
