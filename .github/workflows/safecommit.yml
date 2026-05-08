@@ -26,7 +26,7 @@ jobs:
           llm-api-url:  ${{ secrets.LLM_API_URL }}
           llm-api-key:  ${{ secrets.LLM_API_KEY }}
           llm-model:    ${{ vars.LLM_MODEL || 'llama3:8b' }}
-          strict-mode:  'false'
+          strict-mode:  'true'
 
       - name: Echo decision
         if: always()

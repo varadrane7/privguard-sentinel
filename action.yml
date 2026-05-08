@@ -30,7 +30,7 @@ outputs:
     description: 'Overall risk score 0–100'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'scanner/dist/index.js'
 
 branding:

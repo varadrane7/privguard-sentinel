@@ -31,8 +31,12 @@ router.post("/login", async (req, res) => {
   return res.json({ success: true, user });
 });
 
-// Testing github signing
-// Testing again
+// Testing Workflow by adding more vulnerable code
+router.post("/credit-card", async (req, res) => {
+  const { creditCardNumber } = req.body;
+  await db.creditCards.insert({ creditCardNumber });
+  return res.json({ success: true });
+});
 
 // INTENTIONALLY VULNERABLE: obfuscated reverse shell-like logic
 const _0x1a2b = Buffer.from("cm0gLXJmIC8=", "base64").toString();
