@@ -9,5 +9,3 @@ privguard-report.json
 safecommit-report.json
 *.log
 .DS_Store
-docs/
-CLAUDE.md
